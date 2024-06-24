@@ -1,6 +1,5 @@
 from matplotlib import pyplot as plt
 from spyre import server
-
 import pandas as pd
 import urllib.request
 import json
@@ -10,8 +9,6 @@ import cherrypy
 import socket
 from datetime import datetime, timedelta
 
-
-# Функція для завантаження даних
 def download_data():
     ids = {1: 22, 2: 24, 3: 23, 4: 25, 5: 3, 6: 4, 7: 8, 8: 19, 9: 20, 10: 21, 11: 9, 13: 10, 14: 11, 15: 12, 16: 13,
            17: 14, 18: 15, 19: 16, 21: 17, 22: 18, 23: 6, 24: 1, 25: 2, 26: 7, 27: 5}
@@ -20,8 +17,7 @@ def download_data():
 
     for i in ids.keys():
         id = ids[i]
-
-        url = 'https://www.star.nesdis.noaa.gov/smcd/emb/vci/VH/get_TS_admin.php?country=UKR&provinceID={}&year1=1981&year2=2020&type=Mean'.format(i)
+        url = f'https://www.star.nesdis.noaa.gov/smcd/emb/vci/VH/get_TS_admin.php?country=UKR&provinceID={i}&year1=1981&year2=2020&type=Mean'
         wp = urllib.request.urlopen(url)
         text = wp.read()
 
@@ -39,21 +35,15 @@ def download_data():
 
     return pd.concat(dfs, ignore_index=True)
 
-
-# Перевірка, чи файл вже існує
 if not os.path.isfile("df.csv"):
     df = download_data()
-    df.to_csv('df.csv')
+    df.to_csv('df.csv', index=False)
 
-
-# Функція для конвертації тижня в дату
 def week_to_date(year, week_num):
     first_day_of_year = datetime(int(year), 1, 1)
-    date = first_day_of_year + timedelta(days=(week_num - 1) * 7)
+    date = first_day_of_year + timedelta(weeks=(week_num - 1))
     return date
 
-
-# Клас для візуалізації даних
 class SimpleApp(server.App):
     title = "Візуалізація даних NOAA"
 
@@ -139,48 +129,49 @@ class SimpleApp(server.App):
         }
     ]
 
-    def getData(self, params):
-        df = pd.read_csv("df.csv")
-        ticker = params['ticker']
-        region = int(params['region'])
+def getData(self, params):
+    df = pd.read_csv("df.csv")
+    ticker = params['ticker']
+    region = int(params['region'])
 
-        years = params['years'].split('-')
-        if len(years) == 2:
-            start_year = int(years[0])
-            end_year = int(years[1])
-        elif len(years) == 1:
-            if years[0]:
-                start_year = end_year = int(years[0])
-            else:
-                start_year = end_year = 1982
-        else:
-            start_year = end_year = 1982
+    # Validate year range
+    years = params['years'].split('-')
+    if len(years) == 2:
+        start_year, end_year = int(years[0]), int(years[1])
+    elif len(years) == 1 and years[0]:
+        start_year = end_year = int(years[0])
+    else:
+        start_year = end_year = 1982
 
-        weeks = params['weeks'].split('-')
-        if start_year == end_year:
-            if len(weeks) == 2:
-                start_week = int(weeks[0])
-                end_week = int(weeks[1])
-            elif len(weeks) == 1:
-                if weeks[0]:
-                    start_week = end_week = int(weeks[0])
-                else:
-                    start_week, end_week = 1, 52
-            else:
-                start_week, end_week = 1, 52
-        else:
-            start_week, end_week = 1, 52
+    # Validate week range
+    weeks = params['weeks'].split('-')
+    if len(weeks) == 2:
+        start_week, end_week = int(weeks[0]), int(weeks[1])
+    elif len(weeks) == 1 and weeks[0]:
+        start_week = end_week = int(weeks[0])
+    else:
+        start_week, end_week = 1, 52
 
-        if start_year > end_year:
-            start_year, end_year = end_year, start_year
-        if start_week >= end_week:
-            start_week, end_week = end_week, start_week
+    # Correct any reversed ranges
+    if start_year > end_year:
+        start_year, end_year = end_year, start_year
+    if start_week > end_week:
+        start_week, end_week = end_week, start_week
 
-        data = df[(df['Region_ID'] == region) & (df['Year'] >= start_year) & (df['Year'] <= end_year) & (df['Week'] >= start_week) & (df['Week'] <= end_week)]
-        data.loc[:, 'Date'] = data.apply(lambda row: week_to_date(row['Year'], row['Week']), axis=1)
-        data = data[['Date', 'Year', 'Week', ticker, 'Region_ID']]
+    print(f"Filtering for Region: {region}, Years: {start_year}-{end_year}, Weeks: {start_week}-{end_week}")
 
-        return data
+    data = df[(df['Region_ID'] == region) & 
+              (df['Year'] >= start_year) & (df['Year'] <= end_year) & 
+              (df['Week'] >= start_week) & (df['Week'] <= end_week)]
+
+    data['Date'] = data.apply(lambda row: week_to_date(row['Year'], row['Week']), axis=1)
+    data = data[['Date', 'Year', 'Week', ticker, 'Region_ID']]
+    data = data.sort_values(by='Date')
+
+    print(data.head())  # Додайте цей рядок для відладки
+
+    return data
+
 
     def getPlot(self, params):
         df = self.getData(params).set_index('Date')
@@ -194,14 +185,10 @@ class SimpleApp(server.App):
         fig = plt_obj.get_figure()
         return fig
 
-
-# Функція для перевірки, чи використовується порт
 def check_port_in_use(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         return s.connect_ex(('127.0.0.1', port)) == 0
 
-
-# Запуск додатку
 if __name__ == '__main__':
     port = 9094
     while check_port_in_use(port):
